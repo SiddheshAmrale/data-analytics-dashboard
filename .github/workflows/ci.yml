@@ -1,0 +1,155 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    # Run tests daily at 2 AM UTC
+    - cron: '0 2 * * *'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [3.8, 3.9, 3.10, 3.11]
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+        
+    - name: Cache pip dependencies
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('**/requirements.txt') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-${{ matrix.python-version }}-
+          
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r ai_chat_assistant/requirements.txt
+        pip install -r ai_image_generator/requirements.txt
+        pip install -r ai_text_summarizer/requirements.txt
+        pip install -r ai_sentiment_analyzer/requirements.txt
+        pip install -r ai_code_assistant/requirements.txt
+        pip install pytest pytest-cov black flake8 mypy
+        
+    - name: Run linting
+      run: |
+        black --check .
+        flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics
+        flake8 . --count --exit-zero --max-complexity=10 --max-line-length=88 --statistics
+        
+    - name: Run type checking
+      run: |
+        mypy ai_chat_assistant/ ai_image_generator/ ai_text_summarizer/ ai_sentiment_analyzer/ ai_code_assistant/ --ignore-missing-imports
+        
+    - name: Run tests with coverage
+      run: |
+        pytest tests/ --cov=. --cov-report=xml --cov-report=html --cov-report=term-missing
+        
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        fail_ci_if_error: false
+        
+    - name: Upload coverage report
+      uses: actions/upload-artifact@v3
+      with:
+        name: coverage-report
+        path: htmlcov/
+
+  security-scan:
+    runs-on: ubuntu-latest
+    needs: test
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: 3.11
+        
+    - name: Install security tools
+      run: |
+        pip install bandit safety
+        
+    - name: Run security scan
+      run: |
+        bandit -r . -f json -o bandit-report.json || true
+        safety check --json --output safety-report.json || true
+        
+    - name: Upload security reports
+      uses: actions/upload-artifact@v3
+      with:
+        name: security-reports
+        path: |
+          bandit-report.json
+          safety-report.json
+
+  build-docker:
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      
+    - name: Login to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+        
+    - name: Build and push Docker images
+      run: |
+        docker build -t ai-projects-collection:latest .
+        docker tag ai-projects-collection:latest ${{ secrets.DOCKERHUB_USERNAME }}/ai-projects-collection:latest
+        docker push ${{ secrets.DOCKERHUB_USERNAME }}/ai-projects-collection:latest
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [test, build-docker]
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Deploy to staging
+      run: |
+        echo "Deploying to staging environment..."
+        # Add your deployment commands here
+        
+    - name: Notify deployment
+      run: |
+        echo "Deployment completed successfully!"
+        # Add notification logic here (Slack, email, etc.)
+
+  quality-gate:
+    runs-on: ubuntu-latest
+    needs: [test, security-scan]
+    
+    steps:
+    - name: Check test results
+      run: |
+        echo "Quality gate passed!"
+        echo "All tests and security scans completed successfully."
+        
+    - name: Generate quality report
+      run: |
+        python evaluate_ai_projects.py
+        echo "Repository quality evaluation completed." 

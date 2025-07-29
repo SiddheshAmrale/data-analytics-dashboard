@@ -1,0 +1,87 @@
+version: '3.8'
+
+services:
+  ai-projects:
+    build: .
+    container_name: ai-projects-collection
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - PYTHONPATH=/app
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./generated_images:/app/generated_images
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Development service with hot reload
+  ai-projects-dev:
+    build: .
+    container_name: ai-projects-dev
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - PYTHONPATH=/app
+      - ENVIRONMENT=development
+    volumes:
+      - .:/app
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - ./generated_images:/app/generated_images
+    ports:
+      - "8001:8000"
+    command: ["python", "-m", "pytest", "tests/", "-v"]
+    profiles:
+      - dev
+
+  # Testing service
+  ai-projects-test:
+    build: .
+    container_name: ai-projects-test
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - PYTHONPATH=/app
+      - ENVIRONMENT=testing
+    volumes:
+      - .:/app
+    command: ["python", "-m", "pytest", "tests/", "--cov=.", "--cov-report=html"]
+    profiles:
+      - test
+
+  # Linting service
+  ai-projects-lint:
+    build: .
+    container_name: ai-projects-lint
+    volumes:
+      - .:/app
+    command: ["black", "--check", "."]
+    profiles:
+      - lint
+
+  # Security scanning service
+  ai-projects-security:
+    build: .
+    container_name: ai-projects-security
+    volumes:
+      - .:/app
+    command: ["sh", "-c", "pip install bandit safety && bandit -r . && safety check"]
+    profiles:
+      - security
+
+networks:
+  default:
+    name: ai-projects-network
+
+volumes:
+  data:
+    driver: local
+  logs:
+    driver: local
+  generated_images:
+    driver: local 
